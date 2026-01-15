@@ -12,7 +12,6 @@ import (
 	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
-	"github.com/google/uuid"
 
 	"execution-engine/internal/engine"
 	"execution-engine/internal/language"
@@ -20,7 +19,6 @@ import (
 
 const (
 	workspaceDir = "/workspace"
-	resultFile   = "result.json"
 )
 
 type DockerExecutor struct {
@@ -28,7 +26,10 @@ type DockerExecutor struct {
 }
 
 func NewDockerExecutor() (*DockerExecutor, error) {
-	cli, err := client.NewClientWithOpts(client.FromEnv)
+	cli, err := client.NewClientWithOpts(
+		client.FromEnv,
+		client.WithAPIVersionNegotiation(),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -40,20 +41,21 @@ func (d *DockerExecutor) Run(
 	lang string,
 	code string,
 ) (*engine.ExecuteResult, error) {
+
 	spec, err := language.Resolve(lang)
 	if err != nil {
-		return nil, fmt.Errorf("failed to resolve language spec: %w", err)
+		return nil, fmt.Errorf("resolve language: %w", err)
 	}
 
-	tempDir, err := os.MkdirTemp("", "exec-")
+	tempDir, err := os.MkdirTemp("", "exec-*")
 	if err != nil {
-		return nil, fmt.Errorf("failed to create temp dir: %w", err)
+		return nil, fmt.Errorf("create temp dir: %w", err)
 	}
 	defer os.RemoveAll(tempDir)
 
-	codeFilePath := filepath.Join(tempDir, spec.FileName)
-	if err := os.WriteFile(codeFilePath, []byte(code), 0644); err != nil {
-		return nil, fmt.Errorf("failed to write code to file: %w", err)
+	codePath := filepath.Join(tempDir, spec.FileName)
+	if err := os.WriteFile(codePath, []byte(code), 0644); err != nil {
+		return nil, fmt.Errorf("write code file: %w", err)
 	}
 
 	return d.runContainer(ctx, tempDir, spec)
@@ -64,19 +66,24 @@ func (d *DockerExecutor) runContainer(
 	tempDir string,
 	spec language.Spec,
 ) (*engine.ExecuteResult, error) {
-	// ---- create container ----
-	id := uuid.New().String()
-	containerName := "exec-" + id
-	resp, err := d.cli.ContainerCreate(
+
+	startTime := time.Now()
+
+	// ---------- CREATE CONTAINER ----------
+	createResp, err := d.cli.ContainerCreate(
 		ctx,
 		&container.Config{
 			Image:           spec.Image,
 			Cmd:             spec.RunCommand,
 			WorkingDir:      workspaceDir,
 			Tty:             false,
+			OpenStdin:       false, // non-interactive for now
+			AttachStdout:    true,
+			AttachStderr:    true,
 			NetworkDisabled: true,
 		},
 		&container.HostConfig{
+			AutoRemove: false,
 			Mounts: []mount.Mount{
 				{
 					Type:   mount.TypeBind,
@@ -90,81 +97,96 @@ func (d *DockerExecutor) runContainer(
 		},
 		nil,
 		nil,
-		containerName,
+		"",
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create container: %w", err)
+		return nil, fmt.Errorf("container create: %w", err)
 	}
 
+	containerID := createResp.ID
+
+	// ---------- ALWAYS CLEANUP ----------
 	defer func() {
-		d.cli.ContainerRemove(
+		_ = d.cli.ContainerRemove(
 			context.Background(),
-			resp.ID,
+			containerID,
 			container.RemoveOptions{Force: true},
 		)
 	}()
 
-	startTime := time.Now()
-
-	// ---- run container ----
-	err = d.cli.ContainerStart(
+	// ---------- ATTACH (BEFORE START) ----------
+	attachResp, err := d.cli.ContainerAttach(
 		ctx,
-		resp.ID,
-		container.StartOptions{},
+		containerID,
+		container.AttachOptions{
+			Stream: true,
+			Stdout: true,
+			Stderr: true,
+		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("failed to start container: %w", err)
+		return nil, fmt.Errorf("container attach: %w", err)
+	}
+	defer attachResp.Close()
+
+	var stdoutBuf, stderrBuf strings.Builder
+
+	outputDone := make(chan error, 1)
+	go func() {
+		_, err := stdcopy.StdCopy(&stdoutBuf, &stderrBuf, attachResp.Reader)
+		outputDone <- err
+	}()
+
+	// ---------- START ----------
+	if err := d.cli.ContainerStart(ctx, containerID, container.StartOptions{}); err != nil {
+		return nil, fmt.Errorf("container start: %w", err)
 	}
 
-	// ---- wait for completion ----
-	statusCh, errCh := d.cli.ContainerWait(
+	// ---------- WAIT / TIMEOUT ----------
+	waitCh, errCh := d.cli.ContainerWait(
 		ctx,
-		resp.ID,
+		containerID,
 		container.WaitConditionNotRunning,
+	)
+
+	var (
+		exitCode int
+		timedOut bool
 	)
 
 	select {
 	case err := <-errCh:
 		if err != nil {
-			return nil, fmt.Errorf("error waiting for container: %w", err)
-		}
-	case status := <-statusCh:
-		duration := time.Since(startTime)
-
-		// ---- get logs ----
-		logReader, err := d.cli.ContainerLogs(
-			ctx,
-			resp.ID,
-			container.LogsOptions{
-				ShowStdout: true,
-				ShowStderr: true,
-				Follow:     false,
-			},
-		)
-		if err != nil {
-			return nil, fmt.Errorf("failed to get container logs: %w", err)
-		}
-		defer logReader.Close()
-
-		var stdout, stderr strings.Builder
-		if _, err := stdcopy.StdCopy(&stdout, &stderr, logReader); err != nil {
-			return nil, fmt.Errorf("failed to copy logs: %w", err)
+			return nil, fmt.Errorf("container wait error: %w", err)
 		}
 
-		return &engine.ExecuteResult{
-			ExitCode:   int(status.StatusCode),
-			Stdout:     stdout.String(),
-			Stderr:     stderr.String(),
-			DurationMs: duration.Milliseconds(),
-			TimedOut:   false,
-		}, nil
+	case status := <-waitCh:
+		exitCode = int(status.StatusCode)
 
 	case <-ctx.Done():
-		duration := time.Since(startTime)
-		return &engine.ExecuteResult{
-			DurationMs: duration.Milliseconds(),
-			TimedOut:   true,
-		}, nil
+		timedOut = true
+
+		// force kill
+		_ = d.cli.ContainerKill(
+			context.Background(),
+			containerID,
+			"KILL",
+		)
+
+		// wait until container actually stops
+		<-waitCh
 	}
-	return nil, nil
+
+	// ---------- DRAIN OUTPUT ----------
+	<-outputDone
+
+	duration := time.Since(startTime)
+
+	return &engine.ExecuteResult{
+		ExitCode:   exitCode,
+		Stdout:     stdoutBuf.String(),
+		Stderr:     stderrBuf.String(),
+		DurationMs: duration.Milliseconds(),
+		TimedOut:   timedOut,
+	}, nil
 }
