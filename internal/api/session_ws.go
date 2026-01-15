@@ -31,15 +31,15 @@ func RegisterSessionWS(r *gin.Engine, eng engine.Engine) {
 		}
 		defer conn.Close()
 
+		conn.SetCloseHandler(func(code int, text string) error {
+			log.Printf("WebSocket closed with code %d and text: %s", code, text)
+			sess.DetachWS()
+			log.Printf("WebSocket detached from session %s. Active connections: %d", sess.ID, sess.ActiveWSCount())
+			return nil
+		})
+
 		sess.AttachWS()
 		log.Printf("WS attached to %s (active=%d)", sess.ID, sess.ActiveWSCount())
-
-		defer func() {
-			if sess.DetachWS() {
-				log.Printf("Last WS detached, stopping session %s", sess.ID)
-				sess.Stop()
-			}
-		}()
 
 		// stdin
 		go func() {

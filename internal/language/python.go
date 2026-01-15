@@ -11,5 +11,5 @@ var Python = Spec{
 	Name:       "python",
 	Image:      "python:3.9-alpine",
 	FileName:   "main.py",
-	RunCommand: []string{"python", "main.py"},
+	RunCommand: []string{"python", "-u", "main.py"},
 }
