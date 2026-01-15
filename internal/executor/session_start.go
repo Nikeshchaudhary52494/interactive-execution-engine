@@ -78,14 +78,18 @@ func (d *DockerExecutor) StartSession(
 		return nil, err
 	}
 
+	sessCtx, cancel := context.WithCancel(context.Background())
+
 	sess := session.New(
 		session.NewID(),
 		resp.ID,
 		attach.Conn,
 		attach.Reader,
+		sessCtx,
+		cancel,
 	)
 
-	go d.watchSession(ctx, sess, tempDir)
+	go d.watchSession(sess, tempDir)
 
 	return sess, nil
 }

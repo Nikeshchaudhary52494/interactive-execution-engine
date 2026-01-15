@@ -11,25 +11,34 @@ import (
 )
 
 func (d *DockerExecutor) watchSession(
-	ctx context.Context,
 	s *session.Session,
 	tempDir string,
 ) {
 	defer os.RemoveAll(tempDir)
 
-	// pump stdout/stderr until container exits
-	stdcopy.StdCopy(&s.Stdout, &s.Stderr, s.Output)
+	// stream output
+	go stdcopy.StdCopy(&s.Stdout, &s.Stderr, s.Output)
 
-	statusCh, _ := d.cli.ContainerWait(
-		ctx,
+	waitCh, _ := d.cli.ContainerWait(
+		context.Background(),
 		s.ContainerID,
 		container.WaitConditionNotRunning,
 	)
 
-	<-statusCh
+	select {
+	case <-waitCh:
+		s.MarkFinished()
 
-	s.MarkFinished()
+	case <-s.Context().Done(): // 🔥 session cancelled
+		_ = d.cli.ContainerKill(
+			context.Background(),
+			s.ContainerID,
+			"KILL",
+		)
+		s.MarkTerminated()
+	}
 
+	// ALWAYS remove container
 	_ = d.cli.ContainerRemove(
 		context.Background(),
 		s.ContainerID,

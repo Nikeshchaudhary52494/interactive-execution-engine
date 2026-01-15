@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -11,6 +11,8 @@ import (
 	"execution-engine/internal/engine"
 	"execution-engine/internal/executor"
 	"execution-engine/internal/modules"
+
+	"github.com/gin-contrib/cors"
 )
 
 var upgrader = websocket.Upgrader{
@@ -30,6 +32,16 @@ func main() {
 	eng := engine.New(dockerExec)
 
 	r := gin.Default()
+
+	// 🔥 CORS: allow from anywhere (DEV MODE)
+	r.Use(cors.New(cors.Config{
+		AllowOrigins:     []string{"*"},
+		AllowMethods:     []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
+		AllowHeaders:     []string{"Origin", "Content-Type", "Authorization"},
+		ExposeHeaders:    []string{"Content-Length"},
+		AllowCredentials: false,
+		MaxAge:           12 * time.Hour,
+	}))
 
 	// ------------------------------------------------
 	// Create Session (HTTP)
@@ -51,6 +63,8 @@ func main() {
 			return
 		}
 
+		log.Printf("Session %s created", sess.ID)
+
 		c.JSON(http.StatusOK, gin.H{
 			"sessionId": sess.ID,
 		})
@@ -61,7 +75,6 @@ func main() {
 	// ------------------------------------------------
 	r.GET("/ws/session/:id", func(c *gin.Context) {
 		id := c.Param("id")
-		fmt.Println("ws connection for session:", id)
 
 		sess, ok := eng.GetSession(id)
 		if !ok {
@@ -77,6 +90,17 @@ func main() {
 		}
 		defer conn.Close()
 
+		conn.SetCloseHandler(func(code int, text string) error {
+			log.Printf("WebSocket closed with code %d and text: %s", code, text)
+			sess.DetachWS()
+			log.Printf("WebSocket detached from session %s. Active connections: %d", sess.ID, sess.ActiveWSCount())
+			return nil
+		})
+
+		// attach WS
+		sess.AttachWS()
+		log.Printf("WebSocket attached to session %s. Active connections: %d", sess.ID, sess.ActiveWSCount())
+
 		// -------------------------------
 		// Client → stdin
 		// -------------------------------
@@ -88,25 +112,21 @@ func main() {
 				}
 
 				if err := conn.ReadJSON(&msg); err != nil {
-					// client disconnected
-					sess.CloseInput()
-					return
+					return // handled by defer
 				}
 
-				switch msg.Type {
-				case "input":
+				if msg.Type == "input" {
 					_ = sess.WriteInput(msg.Data)
-				case "close":
-					sess.CloseInput()
 				}
 			}
 		}()
 
-		// -------------------------------
-		// stdout / stderr → client
-		// -------------------------------
+		// ---------------- stdout/stderr (server → client) ----------------
 		lastStdout := 0
 		lastStderr := 0
+
+		ticker := time.NewTicker(40 * time.Millisecond)
+		defer ticker.Stop()
 
 		for {
 			select {
@@ -119,16 +139,16 @@ func main() {
 					"type":  "state",
 					"state": sess.State,
 				})
+				log.Printf("Session %s finished with state %s", sess.ID, sess.State)
 				return
 
-			default:
+			case <-ticker.C:
 				if err := sendDiff(conn, "stdout", sess.Stdout.String(), &lastStdout); err != nil {
 					return
 				}
 				if err := sendDiff(conn, "stderr", sess.Stderr.String(), &lastStderr); err != nil {
 					return
 				}
-				time.Sleep(50 * time.Millisecond)
 			}
 		}
 	})
@@ -136,6 +156,7 @@ func main() {
 	// ------------------------------------------------
 	// Start server
 	// ------------------------------------------------
+	log.Println("Server started on :8080")
 	if err := r.Run(":8080"); err != nil {
 		panic(err)
 	}

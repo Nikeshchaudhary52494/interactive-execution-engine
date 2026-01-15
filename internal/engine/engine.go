@@ -2,6 +2,7 @@ package engine
 
 import (
 	"context"
+	"log"
 
 	"execution-engine/internal/executor"
 	"execution-engine/internal/modules"
@@ -31,6 +32,15 @@ func (e *engine) StartSession(
 	}
 
 	e.sessions.Add(sess)
+	log.Printf("Engine: Session %s added to the manager", sess.ID)
+
+	// 🔥 AUTO-REMOVE when done
+	go func() {
+		<-sess.Done()
+		log.Printf("Engine: Session %s is done, removing from manager", sess.ID)
+		e.sessions.Remove(sess.ID)
+	}()
+
 	return sess, nil
 }
 

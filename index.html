@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Interactive Execution Engine</title>
+  <style>
+    body {
+      font-family: monospace;
+      background: #111;
+      color: #0f0;
+      padding: 20px;
+    }
+    #terminal {
+      width: 100%;
+      height: 400px;
+      background: black;
+      color: #0f0;
+      padding: 10px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      border: 1px solid #444;
+    }
+    #input {
+      width: 100%;
+      padding: 10px;
+      font-family: monospace;
+      font-size: 14px;
+      background: #222;
+      color: #0f0;
+      border: 1px solid #444;
+      outline: none;
+    }
+    button {
+      margin-top: 10px;
+      padding: 8px 16px;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+
+<h2>🧪 Interactive Execution Engine</h2>
+
+<button onclick="start()">▶ Start Session</button>
+
+<div id="terminal"></div>
+<input id="input" placeholder="Type input and press Enter" disabled />
+
+<script>
+let ws = null;
+let sessionId = null;
+
+const terminal = document.getElementById("terminal");
+const input = document.getElementById("input");
+
+function write(data) {
+  terminal.textContent += data;
+  terminal.scrollTop = terminal.scrollHeight;
+}
+
+function writeError(data) {
+  terminal.textContent += "[ERR] " + data;
+  terminal.scrollTop = terminal.scrollHeight;
+}
+
+async function start() {
+  terminal.textContent = "";
+  input.disabled = true;
+
+  // ---- CODE TO EXECUTE ----
+  const code = `
+print("🚀 Application started")
+name = input("Enter your name: ")
+print("Hello", name)
+age = input("Enter your age: ")
+print("Age:", age)
+print("Done")
+`;
+
+  // ---- CREATE SESSION ----
+  const res = await fetch("http://localhost:8080/session", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      language: "python",
+      code: code
+    })
+  });
+
+  const json = await res.json();
+  sessionId = json.sessionId;
+
+  write("Session created: " + sessionId + "\n");
+
+  // ---- CONNECT WEBSOCKET ----
+  ws = new WebSocket(`ws://localhost:8080/ws/session/${sessionId}`);
+
+  ws.onopen = () => {
+    write("[WS connected]\n");
+    input.disabled = false;
+    input.focus();
+  };
+
+  ws.onmessage = (e) => {
+    const msg = JSON.parse(e.data);
+
+    if (msg.type === "stdout") {
+      write(msg.data);
+    }
+
+    if (msg.type === "stderr") {
+      writeError(msg.data);
+    }
+
+    if (msg.type === "state") {
+      write("\n[SESSION " + msg.state + "]\n");
+      input.disabled = true;
+      ws.close();
+    }
+  };
+
+  ws.onclose = () => {
+    write("[WS closed]\n");
+    input.disabled = true;
+  };
+}
+
+// ---- SEND INPUT ----
+input.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const value = input.value;
+    input.value = "";
+
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({
+        type: "input",
+        data: value + "\n"
+      }));
+    }
+  }
+});
+
+// ---- BROWSER CLOSE ----
+window.addEventListener("beforeunload", () => {
+  if (ws) {
+    ws.close();
+  }
+});
+</script>
+
+</body>
+</html>
