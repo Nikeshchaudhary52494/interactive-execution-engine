@@ -1,184 +1,358 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <title>Interactive Execution Engine</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Terminal Exec</title>
     <style>
-      body {
-        font-family: monospace;
-        background: #111;
-        color: #0f0;
-        padding: 20px;
+      :root {
+        --bg: #0c0c0c;
+        --fg: #cccccc;
+        --accent: #00ff41;
+        --border: #333;
+        --panel-bg: #111;
       }
 
-      textarea,
-      input {
-        width: 100%;
-        font-family: monospace;
-        font-size: 14px;
-        background: #222;
-        color: #0f0;
-        border: 1px solid #444;
-        outline: none;
-        padding: 10px;
+      * {
+        margin: 0;
+        padding: 0;
         box-sizing: border-box;
       }
 
-      textarea {
-        height: 180px;
-        resize: vertical;
-        margin-bottom: 10px;
+      body {
+        background: var(--bg);
+        color: var(--fg);
+        font-family: "Courier New", Courier, monospace;
+        height: 100vh;
+        width: 100vw;
+        overflow: hidden;
+        display: flex;
+        flex-direction: column;
+      }
+
+      header {
+        height: 40px;
+        border-bottom: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        padding: 0 15px;
+        justify-content: space-between;
+        background: var(--panel-bg);
+        font-size: 12px;
+      }
+
+      .branding {
+        font-weight: bold;
+        color: var(--accent);
+      }
+      .controls {
+        display: flex;
+        gap: 8px;
+      }
+
+      select,
+      button {
+        background: #222;
+        border: 1px solid var(--border);
+        color: var(--fg);
+        font-family: inherit;
+        font-size: 11px;
+        padding: 2px 8px;
+        cursor: pointer;
+        outline: none;
+      }
+
+      button:hover {
+        background: #333;
+        border-color: var(--accent);
+      }
+      button:active {
+        color: var(--accent);
+      }
+      button:disabled {
+        opacity: 0.3;
+      }
+
+      #workspace {
+        flex: 1;
+        display: flex;
+        overflow: hidden;
+      }
+      #workspace.layout-row {
+        flex-direction: row;
+      }
+      #workspace.layout-col {
+        flex-direction: column;
+      }
+
+      .pane {
+        flex: 1;
+        display: flex;
+        flex-direction: column;
+        overflow: hidden;
+      }
+      .layout-row .pane:first-child {
+        border-right: 1px solid var(--border);
+      }
+      .layout-col .pane:first-child {
+        border-bottom: 1px solid var(--border);
+      }
+
+      .pane-header {
+        background: #1a1a1a;
+        font-size: 10px;
+        padding: 4px 10px;
+        text-transform: uppercase;
+        color: #666;
+        display: flex;
+        justify-content: space-between;
+      }
+
+      textarea,
+      #terminal {
+        flex: 1;
+        background: transparent;
+        color: var(--fg);
+        border: none;
+        outline: none;
+        padding: 15px;
+        font-family: inherit;
+        font-size: 13px;
+        line-height: 1.4;
+        resize: none;
       }
 
       #terminal {
-        width: 100%;
-        height: 300px;
-        background: black;
-        color: #0f0;
-        padding: 10px;
         overflow-y: auto;
         white-space: pre-wrap;
-        border: 1px solid #444;
-        margin-top: 10px;
+        color: var(--accent);
       }
 
-      button {
-        margin-top: 10px;
-        padding: 8px 16px;
-        font-family: monospace;
-        background: #333;
-        color: #0f0;
-        border: 1px solid #555;
-        cursor: pointer;
+      footer {
+        height: 40px;
+        border-top: 1px solid var(--border);
+        display: flex;
+        align-items: center;
+        background: #000;
+        padding: 0 10px;
       }
 
-      button:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
+      .prompt {
+        color: var(--accent);
+        margin-right: 10px;
+        font-weight: bold;
+      }
+      #input {
+        flex: 1;
+        background: transparent;
+        border: none;
+        color: var(--accent);
+        font-family: inherit;
+        font-size: 14px;
+        outline: none;
+      }
+
+      .status-group {
+        display: flex;
+        gap: 15px;
+        font-size: 10px;
+        color: #555;
+        border-left: 1px solid var(--border);
+        padding-left: 15px;
+        height: 100%;
+        align-items: center;
+      }
+      .state-running {
+        color: var(--accent);
+        font-weight: bold;
       }
     </style>
   </head>
-
   <body>
-    <h2>🧪 Interactive Execution Engine</h2>
+    <header>
+      <div class="branding">EXEC_ENGINE_V1.0</div>
+      <div class="controls">
+        <select id="language">
+          <option value="python">python3</option>
+          <option value="javascript">node.js</option>
+          <option value="java">java 17</option>
+          <option value="cpp">g++</option>
+        </select>
+        <button id="layoutBtn">LAYOUT</button>
+        <button id="runBtn">RUN</button>
+        <button id="stopBtn" disabled>STOP</button>
+        <button id="clearBtn">CLEAR</button>
+      </div>
+    </header>
 
-    <!-- CODE INPUT -->
-    <textarea id="code">
-import time
+    <main id="workspace" class="layout-row">
+      <section class="pane">
+        <div class="pane-header">
+          <span>SOURCE_EDITOR</span>
+          <span id="shortcut-hint"></span>
+        </div>
+        <textarea id="code" spellcheck="false" autocomplete="off"></textarea>
+      </section>
 
-print("Program started")
-name = input("Enter your name: ")
-print("Hello", name)
+      <section class="pane">
+        <div class="pane-header">TERMINAL_OUTPUT</div>
+        <div id="terminal"></div>
+      </section>
+    </main>
 
-for i in range(5):
-    time.sleep(1)
-    print(i)
-    </textarea>
-
-    <button id="runBtn" onclick="start()">▶ Run</button>
-
-    <!-- TERMINAL -->
-    <div id="terminal"></div>
-
-    <!-- STDIN -->
-    <input id="input" placeholder="Type input and press Enter" disabled />
+    <footer>
+      <span class="prompt">></span>
+      <input id="input" type="text" placeholder="STDIN_WAITING..." disabled />
+      <div class="status-group">
+        <div>STATE: <span id="status">IDLE</span></div>
+        <div>SID: <span id="sid">N/A</span></div>
+      </div>
+    </footer>
 
     <script>
-      let ws = null;
-      let sessionId = null;
+      const isMac = navigator.platform.toUpperCase().indexOf("MAC") >= 0;
+      document.getElementById("shortcut-hint").textContent = isMac
+        ? "⌘+R"
+        : "CTRL+R";
+
+      const templates = {
+        python: `import time\nname = input("Enter Name: ")\nprint(f"Hello {name}!")\nfor i in range(3):\n    time.sleep(0.5)\n    print(f"Tick {i}")`,
+        javascript: `process.stdout.write("Enter Name: ");\nprocess.stdin.on("data", d => {\n  console.log("Hello " + d.toString().trim());\n  process.exit();\n});`,
+        java: `import java.util.Scanner;\n\npublic class Main {\n    public static void main(String[] args) {\n        Scanner s = new Scanner(System.in);\n        System.out.print("Enter Name: ");\n        String name = s.nextLine();\n        System.out.println("Hello " + name);\n    }\n}`,
+        cpp: `#include <iostream>\nint main() {\n  std::string n;\n  std::cout << "Enter Name: ";\n  std::cin >> n;\n  std::cout << "Hello " << n << std::endl;\n  return 0;\n}`,
+      };
 
       const terminal = document.getElementById("terminal");
       const input = document.getElementById("input");
       const codeBox = document.getElementById("code");
       const runBtn = document.getElementById("runBtn");
+      const stopBtn = document.getElementById("stopBtn");
+      const status = document.getElementById("status");
+      const sid = document.getElementById("sid");
+      const languageSelect = document.getElementById("language");
+      const workspace = document.getElementById("workspace");
 
-      function write(data) {
-        terminal.textContent += data;
-        terminal.scrollTop = terminal.scrollHeight;
-      }
+      let ws = null;
 
-      function writeError(data) {
-        terminal.textContent += "[ERR] " + data;
+      codeBox.value = templates.python;
+      languageSelect.onchange = () =>
+        (codeBox.value = templates[languageSelect.value]);
+
+      // --- TAB KEY HANDLING ---
+      codeBox.addEventListener("keydown", function (e) {
+        if (e.key === "Tab") {
+          e.preventDefault();
+          const start = this.selectionStart;
+          const end = this.selectionEnd;
+
+          // Set textarea value to: text before caret + 4 spaces + text after caret
+          this.value =
+            this.value.substring(0, start) + "    " + this.value.substring(end);
+
+          // Put caret at right position again
+          this.selectionStart = this.selectionEnd = start + 4;
+        }
+      });
+
+      document.getElementById("layoutBtn").onclick = () => {
+        workspace.classList.toggle("layout-row");
+        workspace.classList.toggle("layout-col");
+      };
+
+      function log(msg, color = "") {
+        const span = document.createElement("span");
+        if (color) span.style.color = color;
+        span.textContent = msg;
+        terminal.appendChild(span);
         terminal.scrollTop = terminal.scrollHeight;
       }
 
       async function start() {
-        terminal.textContent = "";
-        input.disabled = true;
-        runBtn.disabled = true;
+        if (ws) cleanup();
+        terminal.innerHTML = "";
+        log("[BOOTING_SANDBOX...]\n", "#666");
 
-        const code = codeBox.value;
+        try {
+          const res = await fetch("http://localhost:8080/session", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              language: languageSelect.value,
+              code: codeBox.value,
+            }),
+          });
+          const json = await res.json();
 
-        // ---- CREATE SESSION ----
-        const res = await fetch("http://localhost:8080/session", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            language: "python",
-            code: code,
-          }),
-        });
+          sid.textContent = json.sessionId.substring(0, 8);
+          ws = new WebSocket(
+            `ws://localhost:8080/ws/session/${json.sessionId}`,
+          );
 
-        const json = await res.json();
-        sessionId = json.sessionId;
+          ws.onopen = () => {
+            status.textContent = "RUNNING";
+            status.classList.add("state-running");
+            runBtn.disabled = true;
+            stopBtn.disabled = false;
+            input.disabled = false;
+            input.focus();
+          };
 
-        write("Session created: " + sessionId + "\n");
+          ws.onmessage = (e) => {
+            const msg = JSON.parse(e.data);
+            if (msg.type === "stdout") log(msg.data);
+            if (msg.type === "stderr") log(msg.data, "#ff5555");
+            if (
+              msg.type === "state" &&
+              (msg.state === "closed" || msg.state === "error")
+            )
+              cleanup();
+          };
 
-        // ---- CONNECT WS ----
-        ws = new WebSocket(`ws://localhost:8080/ws/session/${sessionId}`);
-
-        ws.onopen = () => {
-          write("[WS connected]\n");
-          input.disabled = false;
-          input.focus();
-        };
-
-        ws.onmessage = (e) => {
-          const msg = JSON.parse(e.data);
-
-          if (msg.type === "stdout") write(msg.data);
-          if (msg.type === "stderr") writeError(msg.data);
-
-          if (msg.type === "state") {
-            write("\n[SESSION " + msg.state + "]\n");
-            cleanup();
-          }
-        };
-
-        ws.onclose = () => {
-          write("[WS closed]\n");
+          ws.onclose = cleanup;
+        } catch (e) {
+          log(`\nFATAL: ${e.message}`, "#ff5555");
           cleanup();
-        };
+        }
       }
 
       function cleanup() {
-        input.disabled = true;
+        status.textContent = "IDLE";
+        status.classList.remove("state-running");
+        sid.textContent = "N/A";
         runBtn.disabled = false;
-        if (ws) ws.close();
-        ws = null;
+        stopBtn.disabled = true;
+        input.disabled = true;
+        if (ws) {
+          ws.close();
+          ws = null;
+        }
       }
 
-      // ---- SEND INPUT ----
-      input.addEventListener("keydown", (e) => {
-        if (e.key === "Enter") {
-          const value = input.value;
+      runBtn.onclick = start;
+      stopBtn.onclick = cleanup;
+      document.getElementById("clearBtn").onclick = () =>
+        (terminal.innerHTML = "");
+
+      input.onkeydown = (e) => {
+        if (e.key === "Enter" && ws) {
+          ws.send(JSON.stringify({ type: "input", data: input.value + "\n" }));
           input.value = "";
-
-          if (ws && ws.readyState === WebSocket.OPEN) {
-            ws.send(
-              JSON.stringify({
-                type: "input",
-                data: value + "\n",
-              }),
-            );
-          }
         }
-      });
+      };
 
-      // ---- BROWSER CLOSE ----
-      window.addEventListener("beforeunload", () => {
-        if (ws) ws.close();
-      });
+      window.onkeydown = (e) => {
+        const runPressed = isMac
+          ? e.metaKey && e.key === "r"
+          : e.ctrlKey && e.key === "r";
+        if (runPressed) {
+          e.preventDefault();
+          start();
+        }
+        if (e.ctrlKey && e.key === "c") {
+          e.preventDefault();
+          cleanup();
+        }
+      };
     </script>
   </body>
 </html>

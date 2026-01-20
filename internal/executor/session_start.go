@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
@@ -38,11 +39,25 @@ func (d *DockerExecutor) StartSession(
 		return nil, err
 	}
 
+	cmd := spec.RunCommand
+
+	if len(spec.CompileCmd) > 0 {
+		cmd = []string{
+			"sh",
+			"-c",
+			fmt.Sprintf(
+				"%s && exec %s",
+				strings.Join(spec.CompileCmd, " "),
+				strings.Join(spec.RunCommand, " "),
+			),
+		}
+	}
+
 	createResp, err := d.cli.ContainerCreate(
 		ctx,
 		&container.Config{
 			Image:           spec.Image,
-			Cmd:             spec.RunCommand,
+			Cmd:             cmd,
 			WorkingDir:      workspaceDir,
 			OpenStdin:       true,
 			AttachStdin:     true,
@@ -61,7 +76,6 @@ func (d *DockerExecutor) StartSession(
 			CapDrop:        []string{"ALL"},
 			SecurityOpt:    []string{"no-new-privileges"},
 			Tmpfs: map[string]string{
-				// "/workspace": "rw,size=64m,noexec,nosuid",
 				"/tmp": "rw,size=32m,noexec,nosuid",
 			},
 			Mounts: []mount.Mount{
@@ -78,27 +92,6 @@ func (d *DockerExecutor) StartSession(
 	if err != nil {
 		return nil, fmt.Errorf("container create: %w", err)
 	}
-
-	// containerID := createResp.ID
-	// defer func() {
-	// 	_ = d.cli.ContainerRemove(
-	// 		context.Background(),
-	// 		containerID,
-	// 		container.RemoveOptions{Force: true},
-	// 	)
-	// }()
-
-	// if err := copyCodeToContainer(
-	// 	ctx,
-	// 	d.cli,
-	// 	createResp.ID,
-	// 	spec.FileName, // e.g. main.py
-	// 	code,
-	// ); err != nil {
-	// 	// cleanup on failure
-	// 	_ = d.cli.ContainerRemove(context.Background(), createResp.ID, container.RemoveOptions{Force: true})
-	// 	return nil, err
-	// }
 
 	attach, err := d.cli.ContainerAttach(
 		ctx,
