@@ -18,7 +18,7 @@ func (d *DockerExecutor) watchSession(
 
 	// ---------------- stream stdout ----------------
 	go func() {
-		_, _ = stdcopy.StdCopy(&s.Stdout, &s.Stderr, s.Output)
+		_, _ = stdcopy.StdCopy(s.StdoutWriter(), s.StderrWriter(), s.Output)
 	}()
 
 	waitCh, _ := d.cli.ContainerWait(

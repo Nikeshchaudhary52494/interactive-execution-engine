@@ -20,23 +20,22 @@ const (
 
 func (d *DockerExecutor) StartSession(
 	ctx context.Context,
-	lang string,
-	code string,
-) (*session.Session, error) {
+	s *session.Session,
+) error {
 
-	spec, err := language.Resolve(lang)
+	spec, err := language.Resolve(s.Language)
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	tempDir, err := os.MkdirTemp("", "exec-*")
 	if err != nil {
-		return nil, err
+		return err
 	}
 
 	codePath := filepath.Join(tempDir, spec.FileName)
-	if err := os.WriteFile(codePath, []byte(code), 0644); err != nil {
-		return nil, err
+	if err := os.WriteFile(codePath, []byte(s.Code), 0644); err != nil {
+		return err
 	}
 
 	cmd := spec.RunCommand
@@ -90,7 +89,7 @@ func (d *DockerExecutor) StartSession(
 		nil, nil, "",
 	)
 	if err != nil {
-		return nil, fmt.Errorf("container create: %w", err)
+		return fmt.Errorf("container create: %w", err)
 	}
 
 	attach, err := d.cli.ContainerAttach(
@@ -104,17 +103,17 @@ func (d *DockerExecutor) StartSession(
 		},
 	)
 	if err != nil {
-		return nil, fmt.Errorf("container attach: %w", err)
+		return fmt.Errorf("container attach: %w", err)
 	}
 
 	if err := d.cli.ContainerStart(ctx, createResp.ID, container.StartOptions{}); err != nil {
-		return nil, err
+		return err
 	}
 
 	sessCtx, cancel := context.WithCancel(context.Background())
 
-	sess := session.New(
-		session.NewID(),
+	// Update the EXISTING session with runtime details
+	s.SetRuntime(
 		createResp.ID,
 		attach.Conn,
 		attach.Reader,
@@ -122,7 +121,7 @@ func (d *DockerExecutor) StartSession(
 		cancel,
 	)
 
-	go d.watchSession(sess, tempDir)
+	go d.watchSession(s, tempDir)
 
-	return sess, nil
+	return nil
 }

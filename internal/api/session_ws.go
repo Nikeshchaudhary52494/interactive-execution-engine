@@ -66,8 +66,8 @@ func RegisterSessionWS(r *gin.Engine, eng engine.Engine) {
 		for {
 			select {
 			case <-sess.Done():
-				sendDiff(conn, "stdout", sess.Stdout.String(), &lastStdout)
-				sendDiff(conn, "stderr", sess.Stderr.String(), &lastStderr)
+				sendDiff(conn, "stdout", sess.GetStdout(), &lastStdout)
+				sendDiff(conn, "stderr", sess.GetStderr(), &lastStderr)
 
 				conn.WriteJSON(gin.H{
 					"type":  "state",
@@ -77,10 +77,10 @@ func RegisterSessionWS(r *gin.Engine, eng engine.Engine) {
 				return
 
 			case <-ticker.C:
-				if err := sendDiff(conn, "stdout", sess.Stdout.String(), &lastStdout); err != nil {
+				if err := sendDiff(conn, "stdout", sess.GetStdout(), &lastStdout); err != nil {
 					return
 				}
-				if err := sendDiff(conn, "stderr", sess.Stderr.String(), &lastStderr); err != nil {
+				if err := sendDiff(conn, "stderr", sess.GetStderr(), &lastStderr); err != nil {
 					return
 				}
 			}

@@ -19,6 +19,9 @@ type Session struct {
 	State     State
 	StartedAt time.Time
 
+	Language string
+	Code     string
+
 	ContainerID string
 
 	Stdin  io.WriteCloser
@@ -85,6 +88,62 @@ func (s *Session) AppendOutput(data []byte) {
 	}
 }
 
+func (s *Session) GetStdout() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Stdout.String()
+}
+
+func (s *Session) GetStderr() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.Stderr.String()
+}
+
+func (s *Session) StdoutWriter() io.Writer {
+	return &safeWriter{s: s, isStderr: false}
+}
+
+func (s *Session) StderrWriter() io.Writer {
+	return &safeWriter{s: s, isStderr: true}
+}
+
+type safeWriter struct {
+	s        *Session
+	isStderr bool
+}
+
+func (w *safeWriter) Write(p []byte) (n int, err error) {
+	w.s.mu.Lock()
+	defer w.s.mu.Unlock()
+
+	if w.isStderr {
+		n, err = w.s.Stderr.Write(p)
+	} else {
+		n, err = w.s.Stdout.Write(p)
+		w.s.lastActivity = time.Now()
+		if w.s.idleTimer != nil {
+			w.s.idleTimer.Reset(w.s.idleTimeout)
+		}
+	}
+
+	overflow := false
+	if !w.isStderr && w.s.Stdout.Len() > MaxOutputBytes {
+		overflow = true
+	}
+	if w.isStderr && w.s.Stderr.Len() > MaxOutputBytes {
+		overflow = true
+	}
+
+	if overflow {
+		go func() {
+			log.Printf("Session %s: output limit exceeded", w.s.ID)
+			w.s.Stop()
+		}()
+	}
+	return
+}
+
 //
 // ---------------- Input handling ----------------
 //
@@ -98,7 +157,9 @@ func (s *Session) WriteInput(data string) error {
 	}
 
 	s.lastActivity = time.Now()
-	s.idleTimer.Reset(s.idleTimeout)
+	if s.idleTimer != nil {
+		s.idleTimer.Reset(s.idleTimeout)
+	}
 
 	_, err := s.Stdin.Write([]byte(data))
 	return err
@@ -154,7 +215,9 @@ func (s *Session) Stop() {
 
 	log.Printf("Session %s: Stopping session.", s.ID)
 	s.State = StateTerminated
-	s.cancel()
+	if s.cancel != nil {
+		s.cancel()
+	}
 	s.signalDone()
 }
 
@@ -163,7 +226,9 @@ func (s *Session) Context() context.Context {
 }
 
 func (s *Session) Cancel() {
-	s.cancel()
+	if s.cancel != nil {
+		s.cancel()
+	}
 }
 
 //
@@ -211,6 +276,15 @@ func (s *Session) startIdleWatcher() {
 	})
 }
 
+func (s *Session) StopIdleWatcher() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.idleTimer != nil {
+		s.idleTimer.Stop()
+		s.idleTimer = nil
+	}
+}
+
 //
 // ---------------- Synchronization ----------------
 //
@@ -223,4 +297,42 @@ func (s *Session) signalDone() {
 
 func (s *Session) Done() <-chan struct{} {
 	return s.done
+}
+
+func NewPending(id, lang, code string) *Session {
+	s := &Session{
+		ID:           id,
+		State:        StateWaiting,
+		Language:  lang,
+		Code:      code,
+		StartedAt: time.Now(),
+		done:      make(chan struct{}),
+		idleTimeout: 30 * time.Second,
+		lastActivity: time.Now(),
+	}
+	s.startIdleWatcher()
+	return s
+}
+
+func (s *Session) MarkRunning() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.State = StateRunning
+}
+
+func (s *Session) SetRuntime(
+	containerID string,
+	stdin io.WriteCloser,
+	output io.Reader,
+	ctx context.Context,
+	cancel context.CancelFunc,
+) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.ContainerID = containerID
+	s.Stdin = stdin
+	s.Output = output
+	s.ctx = ctx
+	s.cancel = cancel
 }
