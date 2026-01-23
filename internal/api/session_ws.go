@@ -60,6 +60,14 @@ func RegisterSessionWS(r *gin.Engine, eng engine.Engine) {
 		}()
 
 		lastStdout, lastStderr := 0, 0
+		lastState := sess.State
+
+		// Send initial state
+		conn.WriteJSON(gin.H{
+			"type":  "state",
+			"state": lastState,
+		})
+
 		ticker := time.NewTicker(40 * time.Millisecond)
 		defer ticker.Stop()
 
@@ -82,6 +90,16 @@ func RegisterSessionWS(r *gin.Engine, eng engine.Engine) {
 				}
 				if err := sendDiff(conn, "stderr", sess.GetStderr(), &lastStderr); err != nil {
 					return
+				}
+
+				// Check for state change
+				currentState := sess.State
+				if currentState != lastState {
+					conn.WriteJSON(gin.H{
+						"type":  "state",
+						"state": currentState,
+					})
+					lastState = currentState
 				}
 			}
 		}

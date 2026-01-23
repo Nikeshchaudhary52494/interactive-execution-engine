@@ -180,7 +180,6 @@
         </select>
         <button id="layoutBtn">LAYOUT</button>
         <button id="runBtn">RUN</button>
-        <button id="stopBtn" disabled>STOP</button>
         <button id="clearBtn">CLEAR</button>
       </div>
     </header>
@@ -226,7 +225,6 @@
       const input = document.getElementById("input");
       const codeBox = document.getElementById("code");
       const runBtn = document.getElementById("runBtn");
-      const stopBtn = document.getElementById("stopBtn");
       const status = document.getElementById("status");
       const sid = document.getElementById("sid");
       const languageSelect = document.getElementById("language");
@@ -289,10 +287,9 @@
           );
 
           ws.onopen = () => {
-            status.textContent = "RUNNING";
+            status.textContent = "CONNECTING";
             status.classList.add("state-running");
             runBtn.disabled = true;
-            stopBtn.disabled = false;
             input.disabled = false;
             input.focus();
           };
@@ -301,11 +298,13 @@
             const msg = JSON.parse(e.data);
             if (msg.type === "stdout") log(msg.data);
             if (msg.type === "stderr") log(msg.data, "#ff5555");
-            if (
-              msg.type === "state" &&
-              (msg.state === "closed" || msg.state === "error")
-            )
-              cleanup();
+            if (msg.type === "state") {
+              status.textContent = msg.state.toUpperCase();
+       
+              if (msg.state === "closed" || msg.state === "error") {
+                cleanup();
+              }
+            }
           };
 
           ws.onclose = cleanup;
@@ -320,7 +319,6 @@
         status.classList.remove("state-running");
         sid.textContent = "N/A";
         runBtn.disabled = false;
-        stopBtn.disabled = true;
         input.disabled = true;
         if (ws) {
           ws.close();
@@ -329,7 +327,6 @@
       }
 
       runBtn.onclick = start;
-      stopBtn.onclick = cleanup;
       document.getElementById("clearBtn").onclick = () =>
         (terminal.innerHTML = "");
 
